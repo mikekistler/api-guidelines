@@ -1,6 +1,7 @@
 # Microsoft Azure REST API Guidelines
 
 <!-- cspell:ignore autorest, BYOS, etag, idempotency, maxpagesize, innererror -->
+<!-- markdownlint-disable MD033 -->
 
 ## History
 
@@ -80,8 +81,10 @@ Where:
  | resource&#x2011;id | Id of resource within the resource-collection. This MUST be the raw string/number/guid value with no quoting but properly escaped to fit in a URL segment.
  
 
+<a href="#url-casing"></a>
 :white_check_mark: **DO** use kebab-casing (preferred) or camel-casing for URL path segments. If the segment refers to a JSON field, use camel casing.
 
+<a name="url-length"></a>
 :white_check_mark: **DO** return `414-URI Too Long` if a URL exceeds 2083 characters
 
 :white_check_mark: **DO** treat service-defined URL path segments as case-sensitive. If the passed-in case doesn't match what the service expects, the request **MUST** fail with a `404-Not found` HTTP return code.
