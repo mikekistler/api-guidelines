@@ -16,6 +16,8 @@ Please ensure that you add an anchor tag to any new guidelines that you add and 
 
 | Date        | Notes                                                          |
 | ----------- | -------------------------------------------------------------- |
+| 2024-Jan-17 | Added guidelines on returning string offsets & lengths         |
+| 2024-Jan-17 | Updated LRO guidelines                                         |
 | 2023-May-12 | Explain service response for missing/unsupported `api-version` |
 | 2023-Apr-21 | Update/clarify guidelines on POST method repeatability         |
 | 2023-Apr-07 | Update/clarify guidelines on polymorphism                      |
@@ -438,7 +440,7 @@ This indicates to client libraries and customers that values of the enumeration 
 
 Polymorphism types in REST APIs refers to the possibility to use the same property of a request or response to have similar but different shapes. This is commonly expressed as a `oneOf` in JsonSchema or OpenAPI. In order to simplify how to determine which specific type a given request or response payload corresponds to, Azure requires the use of an explicit discriminator field.
 
-Note: Polymorphic types can make your service more difficult for nominally typed languages to consume. See the corresponding section in the [Considerations for service design](./ConsiderationsForServiceDesign.md#avoid-surprises) for more information. 
+Note: Polymorphic types can make your service more difficult for nominally typed languages to consume. See the corresponding section in the [Considerations for service design](./ConsiderationsForServiceDesign.md#avoid-surprises) for more information.
 
 <a href="#json-use-discriminator-for-polymorphism" name="json-use-discriminator-for-polymorphism">:white_check_mark:</a> **DO** define a discriminator field indicating the kind of the resource and include any kind-specific fields in the body.
 
@@ -838,7 +840,7 @@ For example:
 ### Repeatability of requests
 
 Fault tolerant applications require that clients retry requests for which they never got a response, and services must handle these retried requests idempotently. In Azure, all HTTP operations are naturally idempotent except for POST used to create a resource and [POST when used to invoke an action](
-https://github.com/microsoft/api-guidelines/blob/vNext/azure/Guidelines.md#performing-an-action). 
+https://github.com/microsoft/api-guidelines/blob/vNext/azure/Guidelines.md#performing-an-action).
 
 <a href="#repeatability-headers" name="repeatability-headers">:ballot_box_with_check:</a> **YOU SHOULD** support repeatable requests as defined in [OASIS Repeatable Requests Version 1.0](https://docs.oasis-open.org/odata/repeatable-requests/v1.0/repeatable-requests-v1.0.html) for POST operations to make them retriable.
 - The tracked time window (difference between the `Repeatability-First-Sent` value and the current time) **MUST** be at least 5 minutes.
@@ -848,10 +850,11 @@ https://github.com/microsoft/api-guidelines/blob/vNext/azure/Guidelines.md#perfo
 <a href="#lro" name="lro"></a>
 ### Long-Running Operations & Jobs
 
-When the processing for an operation may take a significant amount of time to complete, it should be
-implemented as a _long-running operation (LRO)_. This allows clients to continue running while the
-operation is being processed. The client obtains the outcome of the operation at some later time
-through another API call.
+A _long-running operation (LRO)_ is typically an operation that should execute synchronously but due to services not wanting to maintain long-lived connections (>1 seconds) and load-balancer timeouts the operation must execute asynchronously. For this pattern, the client initiates the operation on the service and then the client repeatedly polls the service (via another API call) to track the operation's progress/completion.
+LROs are always started by 1 logical client and may be polled (have their status checked) by the same client, another client, or even multiple clients/browsers. An example would be a dashboard or portal that shows all the operations along with their status.
+
+Initiating an LRO creates a status monitor resource to track the operation’s progress. A status monitor has a “status” field indicating the operation’s status: NotStarted, Running, Succeeded, Failed, Canceled (optional) – the last three are "terminal" states. Clients can poll the status monitor resource periodically to check on the operation’s status.
+
 See the [Long Running Operations section](./ConsiderationsForServiceDesign.md#long-running-operations) in
 Considerations for Service Design for an introduction to the design of long-running operations.
 
@@ -859,14 +862,13 @@ Considerations for Service Design for an introduction to the design of long-runn
 
 <a href="#lro-no-patch-lro" name="lro-no-patch-lro">:no_entry:</a> **DO NOT** implement PATCH as an LRO.  If LRO update is required it must be implemented with POST.
 
-In rare instances where an operation may take a _very long_ time to complete, e.g. longer than 15 minutes,
-it may be better to expose this as a first class resource of the API rather than as an operation on another resource.
+There are three patterns for long-running operations in Azure.
+- The first pattern is used for a long-running POST action or DELETE operation. These return a `202 Accepted` response with a JSON status monitor in the response body.
+- The second pattern applies only in the case of a PUT operation to create a resource that also involves additional long-running processing.
+- The third pattern is for initiating a long-running action LRO having nothing to do with any resource or is a batch operation. This pattern uses a PUT operation for a resource that combines a status monitor with the results of the operation. In this pattern, clients obtain the status of the operation by issuing a GET on the same URL as the PUT operation.
 
-There are two basic patterns for long-running operations in Azure. The first pattern is used for a POST and DELETE
-operations that initiate the LRO. These return a `202 Accepted` response with a JSON status monitor in the response body.
-The second pattern applies only in the case of a PUT operation to create a resource that also involves additional long-running processing.
 For guidance on when to use a specific pattern, please refer to [Considerations for Service Design, Long Running Operations](./ConsiderationsForServiceDesign.md#long-running-operations).
-These are described in the following two sections.
+These are described in the following sections.
 
 #### POST or DELETE LRO pattern
 
@@ -914,6 +916,22 @@ For a PUT (create or replace) with additional long-running processing:
 <a href="#lro-put-returns-operation-location" name="lro-put-returns-operation-location">:ballot_box_with_check:</a> **YOU SHOULD** include an `Operation-Location` header in the response with the absolute URL of the status monitor for the operation.
 
 <a href="#lro-put-operation-location-includes-api-version" name="lro-put-operation-location-includes-api-version">:ballot_box_with_check:</a> **YOU SHOULD** include the `api-version` query parameter in the `Operation-Location` header with the same version passed on the initial request if it is required by the get operation on the status monitor.
+
+#### LRO operation not related to a resource
+
+A long-running operation with no related resource (or batch operation) should be a PUT operation that conforms to the following pattern:
+
+<a href="#lro-nonresource-action-in-path" name="lro-">:white_check_mark:</a> **DO** use a static path segment of the URL to identify the action to be performed.
+
+<a href="#lro-nonresource-operation-id" name="lro-nonresource-operation-id">:white_check_mark:</a> **DO** specify the operation-id as a (required) path parameter in the last segment of the URL.
+
+<a href="#lro-nonresource-request-and-response-body" name="lro-nonresource-request-and-response-body">:white_check_mark:</a> **DO** use the same JSON schema for the request and response of the PUT operation.
+
+<a href="#lro-nonresource-valid-inputs-synchronously" name="lro-nonresource-valid-inputs-synchronously">:white_check_mark:</a> **DO** perform as much validation as practical when initiating the operation to alert clients of errors early.
+
+<a href="#lro-nonresource-returns-201" name="lro-nonresource-returns-201">:white_check_mark:</a> **DO** return a `201-Created` status code from the initial request with a representation of the resource if the action was accepted.
+
+<a href="#lro-nonresource-id-unique-except-retries" name="lro-nonresource-id-unique-except-retries">:white_check_mark:</a> **DO** fail a request with a `409-Conflict` if the URL (and operation-id) matches an existing operation unless the request is identical to the prior request (a retry scenario).
 
 #### Obtaining status and results of long-running operations
 
@@ -1098,8 +1116,64 @@ While it may be tempting to use a revision/version number for the resource as th
 
 <a href="#condreq-etag-depends-on-encoding" name="condreq-etag-depends-on-encoding">:white_check_mark:</a> **DO**, when supporting multiple representations (e.g. Content-Encodings) for the same resource, generate different ETag values for the different representations.
 
+### Returning String Offsets & Lengths (Substrings)
+
+Some Azure services return substring offet & length values within a string. For example, the offset & length within a string to a name, email address, or phone #.
+When a service response includes a string, the client's programming language deserializes that string into that language's internal string encoding. Below are the possible encodings and examples of languages that use each encoding:
+
+| Encoding    | Example languages |
+| -------- | ------- |
+| UTF-8 | Go, Rust, Ruby, PHP |
+| UTF-16 | JavaScript, Java, C# |
+| CodePoint (UTF-32) | Python |
+
+Because the service doesn't know what language a client is written in and what string encoding that language uses, the service can't return UTF-agnostic offset and length values that the client can use to index within the string. To address this, the service response must include offset & length values for all 3 possible encodings and then the client code must select the encoding it required by its language's internal string encoding.
+
+For example, if a service response needed to identify offset & length values for "name" and "email" substrings, the JSON response would look like this:
+
+```json
+{
+  (... other properties not shown...)
+  "fullString": "(...some string containing a name and an email address...)",
+  "name": {
+    "offset": {
+      "utf8": 12,
+      "utf16": 10,
+      "codePoint":  4
+    },
+    "length": {
+      "uft8": 10,
+      "utf16": 8,
+      "codePoint":  2
+    }
+  },
+  "email": {
+    "offset": {
+      "utf8": 12,
+      "utf16": 10,
+      "codePoint":  4
+    },
+    "length": {
+      "uft8": 10,
+      "utf16": 8,
+      "codePoint":  4
+    }
+  }
+}
+```
+
+Then, the Go developer, for example, would get the substring containing the name using code like this:
+
+```go
+   var response := client.SomeMethodReturningJSONShownAbove("...")
+   name := response.fullString[ response.name.offset.utf8 : response.name.offset.utf8 + response.name.length.utf8]
+```
+
+The service must calculate the offset & length for all 3 encodings and return them because clients find it difficult working with Unicode encodings and how to convert from one encoding to another. In other words, we do this to simplify client development and ensure customer success when isolating a substring.
+
 <a href="#telemetry" name="telemetry"></a>
 ### Distributed Tracing & Telemetry
+
 Azure SDK client guidelines specify that client libraries must send telemetry data through the `User-Agent` header, `X-MS-UserAgent` header, and Open Telemetry.
 Client libraries are required to send telemetry and distributed tracing information on every  request. Telemetry information is vital to the effective operation of your service and should be a consideration from the outset of design and implementation efforts.
 

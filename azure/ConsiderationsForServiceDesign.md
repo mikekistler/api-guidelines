@@ -231,6 +231,10 @@ If a long-running update is required it should be implemented with POST.
 
 There is a special form of long-running operation initiated with PUT that is described
 in [Create (PUT) with additional long-running processing](./Guidelines.md#put-operation-with-additional-long-running-processing).
+
+We have added a pattern for long-running operations that are not related to a resource or are batch operations.
+This pattern is described in [Long-running Action Operations](./Guidelines.md#long-running-action-operations).
+
 The remainder of this section describes the pattern for long-running POST and DELETE operations.
 
 This diagram illustrates how a long-running operation with a status monitor is initiated and then how the client
@@ -293,12 +297,12 @@ The operation is initiated with a POST operation and the operation path ends in 
 
 ```text
 POST /<service-or-resource-url>:<action>?api-version=2022-05-01
-Operation-Id: 22 
- 
-{ 
-   "arg1": 123 
-   "arg2": "abc" 
-} 
+Operation-Id: 22
+
+{
+   "arg1": 123
+   "arg2": "abc"
+}
 ```
 
 The response is a `202 Accepted` as described above.
@@ -306,7 +310,7 @@ The response is a `202 Accepted` as described above.
 ```text
 HTTP/1.1 202 Accepted
 Operation-Location: https://<status-monitor-endpoint>/22
- 
+
 {
    "id": "22",
    "status": "NotStarted"
@@ -323,7 +327,7 @@ When the operation completes successfully, the result (if there is one) will be 
 
 ```text
 HTTP/1.1 200 OK
- 
+
 {
    "id": "22",
    "status": "Succeeded",
@@ -344,7 +348,7 @@ PUT /items/FooBar&api-version=2022-05-01
 Operation-Id: 22
 
 {
-   "prop1": 555, 
+   "prop1": 555,
    "prop2": "something"
 }
 ```
@@ -358,13 +362,13 @@ The response may also include an `Operation-Location` header for backward compat
 If the resource supports ETags, the response may contain an `etag` header and possibly an `etag` property in the resource.
 
 ```text
-HTTP/1.1 201 Created 
+HTTP/1.1 201 Created
 Operation-Id: 22
 Operation-Location: https://items/operations/22
 etag: "123abc"
 
 {
-  "id": "FooBar", 
+  "id": "FooBar",
   "etag": "123abc",
   "prop1": 555,
   "prop2": "something"
@@ -381,7 +385,7 @@ When the additional processing completes, the status monitor will indicate if it
 
 ```text
 HTTP/1.1 200 OK
- 
+
 {
    "id": "22",
    "status": "Succeeded"
@@ -400,6 +404,49 @@ The resource being deleted should remain visible (returned from a GET) until the
 
 When the delete operation completes successfully, a client must be able to create new resource with same name without conflicts.
 
+### Long-running action operation not related to a resource
+
+A long-running action operation that is related to a resource should use a POST action operation as described above,
+where the action name is appended to the resource URL.
+When an LRO action is not related to a specific resource (a batch operation is one example), another approach is needed.
+
+A long-running action operation not related to a resource should use a PUT operation for a resource that combines a status monitor with the results of the operation. In this pattern, clients obtain the status of the operation by issuing a GET on the same URL as the PUT operation.
+
+The following examples illustrate this pattern.
+
+```text
+PUT /translate-operations/<operation-id>
+
+<Request body is combination of status monitor and operation properties>
+```
+
+Note that the client specifies the operation id in the URL path.
+
+A successful response to the PUT operation should have a `201 Created` status and response body
+of the same structure as the request body, possibly with some additional output-only fields.
+
+```text
+201 Created
+retry-after: <delay-seconds>    (if status not terminal)
+
+<Response body is combination of status monitor and operation properties>
+```
+
+Clients the issue GET requests to the same URL to obtain the status of the operation.
+
+```text
+PUT /translate-operations/<operation-id>
+```
+
+The response to the GET request should be a `200 OK` with the same response body as the PUT request.
+
+```text
+200 OK
+retry-after: <delay-seconds>    (if status not terminal)
+
+<Response body is combination of status monitor and operation properties>
+```
+
 ### Controlling a long-running operation
 
 It might be necessary to support some control action on a long-running operation, such as cancel.
@@ -412,8 +459,8 @@ POST /<status-monitor-url>:cancel?api-version=2022-05-01
 A successful response to a control operation should be a `200 OK` with a representation of the status monitor.
 
 ```text
-HTTP/1.1 200 OK 
- 
+HTTP/1.1 200 OK
+
 {
    "id": "22",
    "status": "Canceled"
